@@ -1,8 +1,8 @@
 import numpy as np
 import random
+import copy
 
 """
-allSol is a list of sol (of all ants in an iteration)
 a sol is a list of routes
 a route is a list of nodes = [0, customer1, customer2, ..., 0]
 """
@@ -73,12 +73,48 @@ class ACO:
         self.normalizedDistMatrix = self.distMatrix / maxDist
 
 
+    def run(self):  # main function to run the ACO, return (bestObj, best sol)
+
+        # initialize
+        self.pheromonematrix = np.ones((self.customerCnt + 1, self.customerCnt + 1))
+        bestSol = None
+        bestObj = float("inf")
+
+        # main loop
+        for _ in range(self.maxIter):
+
+            # initialize for this iteration
+            Sbest = None  # best sol found in this iteration
+            SbestObj = float("inf")
+
+            # each ant constructs a sol
+            for _ in range(self.m):
+                sol = self.randomTransfer()   # generate a sol for this ant
+                obj = self.calculateObj(sol)  # calculate the obj of this sol
+
+                # update best solution found so far
+                if obj < SbestObj:
+                    Sbest = copy.deepcopy(sol)
+                    SbestObj = obj
+
+            # destroy and repair
+            """ the value of L is not mentioned in the paper! """
+            Sd, R = self.destroy(sol = Sbest, L = 0.1 * self.customerCnt)  
+            Sr, SrObj = self.repair(Sd, R)
+
+            # global update
+            if SrObj < SbestObj:
+                Sbest = copy.deepcopy(Sr)
+                SbestObj = SrObj
+            if SbestObj < bestObj:
+                bestObj = SrObj
+                bestSol = copy.deepcopy(Sr)
+            self.pheromonematrix = self.updatePheromone(Sbest)
+        
+        return bestObj, bestSol
+
+
     """ === 兩位學姐做 === """
-    def run(self):  # main function to run the ACO, return a list [bestObj, a list of best routes]
-        pass  # write the code here
-        # you might need to use self.randomTransfer(), self.calculateObj(), self.destroy(), self.repair(), self.updatePheromone()
-
-
     def findFeasibleNodes(self, route):  # return a list of "unvisited" "feasible" nodes
         # return [0] if no customer can be found, and thus the ant should return to the depot and restart a route
         # raise an error if even returning to depot is infeasible
@@ -94,8 +130,8 @@ class ACO:
     def calculateObj(self, sol):  # return the obj of a sol
         pass  # write the code here
 
-    def updatePheromone(self, allSol, allObj):  # return the updated pheromoneMatrix
-        # all Obj: a list of objective values
+    def updatePheromone(self, Sbest):  # return the updated pheromoneMatrix
+        # Sbest: the best sol found in the current iteration
         pass  # write the code here
 
 
