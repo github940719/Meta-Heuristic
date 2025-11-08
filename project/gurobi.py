@@ -53,7 +53,7 @@ class GurobiForVRPSPDTW:
         # === Sets and Big-M ===
         V = range(1, self.customerCnt + 1) # V = {1, ..., n}, set of customers excluding depot
         V0 = range(self.customerCnt + 1)   # V0 = {0, 1, ..., n}, set of all nodes including depot
-        K = range(self.vehCnt)             # K = {1, ..., k}, set of vehicles
+        K = range(self.vehCnt)             # K = {0, ..., k-1}, set of vehicles
         M = max(self.timeWindow[0][1], self.vehCapacity)  # Big-M value for time and load constraints
 
         # === Decision Variables ===
