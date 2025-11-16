@@ -258,7 +258,7 @@ class ACO:
             for i in range(len(route) - 1):
                 u, v = route[i], route[i + 1]
                 self.pheromonematrix[u][v] += delta_tau # 更新費洛蒙
-                self.pheromonematrix[v][u] = self.pheromonematrix[u][v]  # only print on the terminal, do not write to the outputFile
+                # self.pheromonematrix[v][u] = self.pheromonematrix[u][v]
 
         return self.pheromonematrix
 
