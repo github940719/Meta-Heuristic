@@ -2,6 +2,8 @@ import numpy as np
 import random
 import copy
 import heapq
+import time
+import os
 
 """
 a sol is a list of routes
@@ -12,7 +14,7 @@ EPS = 1e-10   # 極小常數，避免除以 0
 
 class ACO:
 
-    def setAlgorithmParameter(self, m = 20, alpha = 2, beta = 1, gamma = 2, delta = 3, rho = 0.85, Q = 1000, r0 = 0.5, maxIter = 200, L = 10, D = 3):
+    def setAlgorithmParameter(self, m, alpha, beta, gamma, delta, rho, Q, r0, maxIter, L, D):
         self.m = m           # number of ants
         self.alpha = alpha   # pheromone factor
         self.beta = beta     # heuristic factor for (1 / dist)
@@ -110,7 +112,7 @@ class ACO:
                 bestSol = copy.deepcopy(Sbest)
             self.pheromonematrix = self.updatePheromone(Sbest)
 
-            print("iter", iter, "bestObj", bestObj)
+            print("iter", iter, "bestObj", bestObj)  # 沒有要 trace 程式碼可以關掉
         
         # destroy and repair "local search again"
         Sd, R = self.destroy(sol = bestSol)  
@@ -154,30 +156,19 @@ class ACO:
         for i in range(1, self.customerCnt + 1):
             if i in visitedSet:
                 continue  # this node has been visited
+
+            """
+            方式一: 直接用 bottleNeck, currentLoad, currentTime 檢查加入 i 之後的可行性 (目前寫法)
+            方式二: 重新檢查整條路線的可行性  (註解寫法)
+            設定相同的 random.seed(數字 e.g. 0)、np.random.seed(數字 e.g. 0) ，答案應相同 (不一樣請告訴我!)，比較程式執行時間差異
+            """
             
-            if checkFeasibilityWithCummulation(i):
+            if checkFeasibilityWithCummulation(i):  # 方式一
+            # if self.checkFeasibility(route + [i, 0]):   # 方式二
                 feasible.append(i)  # this node can be visited next
         
         if len(feasible) == 0:  # no feasible node or all nodes have been visited
             feasible = [0]  # the only choice now is returning to depot
-        
-        """
-        不可以單純累積 load; 事實上每個站點的 pickup 和 delivery 不可抵消!
-        因為 delivery 的意思是貨物必須 "從起點" 載過來，而不是當時車上有貨就好
-        """
-        # for j in range(1, self.customerCnt + 1):
-        #     if j in visitedSet:  # 若已拜訪過，就跳過
-        #         continue
-        #     load_after = currentLoad + (self.pickupDemand[j] - self.deliveryDemand[j])
-        #     if load_after > self.vehCapacity: # 如果超過車輛容量，就不可行
-        #         continue
-
-        #     travelTime = self.timeMatrix[curr][j]
-        #     arrival = currentTime + travelTime
-        #     ready, due = self.timeWindow[j] # 顧客時間窗
-
-        #     if arrival <= due + 1e-6:
-        #         feasible.append(j)
 
         return feasible
     
@@ -206,10 +197,14 @@ class ACO:
                     tau = self.pheromonematrix[currNode][j] ** self.alpha
                     eta = (1.0 / (self.distMatrix[currNode][j] + EPS)) ** self.beta
                     ready, due = self.timeWindow[j]
+
+                    """
+                    測試論文跟我們發想的 random transfer rule 解's 差異
+                    """
                     tw_term = (1.0 / max(due - ready, EPS)) ** self.gamma
                     wt_term = (1.0 / max(self.serviceTime[j], EPS)) ** self.delta
                     # tw_term = (1.0 / max(due - (currentTime + self.timeMatrix[currNode, j]), EPS)) ** self.delta
-                    # wt_term = 1.0
+                    # wt_term = 1.0  # 不考慮的意思
                     score = tau * eta * tw_term * wt_term
                     scores.append(score)
 
@@ -258,18 +253,13 @@ class ACO:
 
         _, _, length = self.calculateObj(Sbest)
         delta_tau = self.Q / (length + EPS) # 計算該路徑增加的費洛蒙量
-        """ length 是邊 (i, j) 的長度 (論文 length of the path (i, j) 看起來是這個),
-            還是整條 route 的總長度 (目前的程式看起來是這個) ? 
-            但 gemeni & gpt 傾向論文寫錯了，應該看解的總長度 """
 
         for route in Sbest:
             for i in range(len(route) - 1):
                 u, v = route[i], route[i + 1]
                 self.pheromonematrix[u][v] += delta_tau # 更新費洛蒙
-                # self.pheromonematrix[v][u] = self.pheromonematrix[u][v]
-                """ 為甚麼設定費洛蒙矩陣[u][v] = [v][u] ? 
-                    gemeni: 因為多數的 TSP 沒有方向性，只考慮距離的話的確是對稱的
-                    gpt: 但是本問題有時間窗、pick-up / delivery, (i, j) 好不一定 (j, i) 好 """
+                self.pheromonematrix[v][u] = self.pheromonematrix[u][v]  # only print on the terminal, do not write to the outputFile
+
         return self.pheromonematrix
 
 
@@ -398,22 +388,45 @@ class ACO:
 
 
 
-if __name__ == "__main__":
+if __name__ == "__main__":  # 測試 L, D 的範例程式碼
     solver = ACO()
     datasetFilePath = "Wang_Chen_data/rdp101.txt"
-    solver.setProblemParameter(datasetFilePath) 
-    solver.setAlgorithmParameter(m = 20, alpha = 2, beta = 1, gamma = 2, delta = 3, rho = 0.85, 
-        Q = 1000, r0 = 0.5, maxIter = 200, L = 0.1 * solver.customerCnt, D = 3)
-    
-    import time
-    startTime = time.perf_counter()
-    bestSol, bestObjInfo = solver.run()
-    endTime = time.perf_counter()
+    solver.setProblemParameter(datasetFilePath)
 
-    print("bestSol:")
-    for route in bestSol:
-        print(route)
-    print("bestObj:", bestObjInfo[0])
-    print("number of vehicle", bestObjInfo[1])
-    print("total dist", bestObjInfo[2])
-    print(f"execution time {endTime - startTime:.2f}")
+    with open("testResult.txt", "w") as outputFile:
+        outputFile.write("L, D, minObj, NV, Dist, avgObj\n")
+        outputFile.flush()
+
+        for testL in [0.05, 0.1, 0.15, 0.2, 0.25]:
+            for testD in [1, 2, 3, 4, 5]:
+
+                results = []  # (obj, NV, dist)
+
+                for _ in range(10):  # run 10 times
+                    solver.setAlgorithmParameter(
+                        m = 20, alpha = 2, beta = 1, gamma = 2, delta = 3, 
+                        rho = 0.85,Q = 1000, r0 = 0.5, maxIter = 200,
+                        L = testL * solver.customerCnt, D = testD
+                    )
+
+                    startTime = time.perf_counter()
+                    bestSol, bestObjInfo = solver.run()
+                    endTime = time.perf_counter()
+
+                    print("bestSol:")
+                    for route in bestSol:
+                        print(route)
+                    print("bestObj:", bestObjInfo[0])
+                    print("number of vehicle", bestObjInfo[1])
+                    print("total dist", bestObjInfo[2])
+                    print(f"execution time {endTime - startTime:.2f}")
+
+                    # append (obj, NV, Dist)
+                    results.append((bestObjInfo[0], bestObjInfo[1], bestObjInfo[2]))
+
+                minObj, vehCnt, Dist = min(results, key = lambda x: x[0])
+                avgObj = sum(r[0] for r in results) / len(results)
+
+                # write
+                outputFile.write(f"{testL}, {testD}, {minObj}, {vehCnt}, {Dist}, {avgObj}\n")
+                outputFile.flush()
