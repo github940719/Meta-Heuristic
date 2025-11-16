@@ -8,6 +8,8 @@ a sol is a list of routes
 a route is a list of nodes = [0, customer1, customer2, ..., 0]
 """
 
+EPS = 1e-10   # 極小常數，避免除以 0
+
 class ACO:
 
     def setAlgorithmParameter(self, m = 20, alpha = 2, beta = 1, gamma = 2, delta = 3, rho = 0.85, Q = 1000, r0 = 0.5, maxIter = 200, L = 10, D = 3):
@@ -86,7 +88,7 @@ class ACO:
             SbestObj = float("inf")
 
             # each ant constructs a sol
-            for _ in range(self.m):
+            for ant in range(self.m):
                 sol = self.randomTransfer()   # generate a sol for this ant
                 obj, _, _ = self.calculateObj(sol)  # calculate the obj of this sol
 
@@ -104,8 +106,8 @@ class ACO:
                 Sbest = copy.deepcopy(Sr)
                 SbestObj = SrObj
             if SbestObj < bestObj:
-                bestObj = SrObj
-                bestSol = copy.deepcopy(Sr)
+                bestObj = SbestObj
+                bestSol = copy.deepcopy(Sbest)
             self.pheromonematrix = self.updatePheromone(Sbest)
 
             print("iter", iter, "bestObj", bestObj)
@@ -180,16 +182,14 @@ class ACO:
         return feasible
     
 
-    """ === not checked === """
     def randomTransfer(self):  # return a sol of an ant (a list of routes, a route is also a list)
-        EPS = 1e-9   # 極小常數，避免除以 0
         sol = []     
         visitedSet = set()  # 已拜訪客戶的集合
 
         while len(visitedSet) < self.customerCnt:
             route = [0] # 如果還有顧客沒拜訪，就再從倉庫出發
             currentTime = self.timeWindow[0][0]  # 當前時間
-            currentLoad = 0  # 當前車量載重
+            currentLoad = 0  # 當前車輛的載重
             bottleNeckLoad = 0  # 到目前為止的容量瓶頸
             currNode = 0  # 目前的客戶編號
 
@@ -208,34 +208,31 @@ class ACO:
                     ready, due = self.timeWindow[j]
                     tw_term = (1.0 / max(due - ready, EPS)) ** self.gamma
                     wt_term = (1.0 / max(self.serviceTime[j], EPS)) ** self.delta
+                    # tw_term = (1.0 / max(due - (currentTime + self.timeMatrix[currNode, j]), EPS)) ** self.delta
+                    # wt_term = 1.0
                     score = tau * eta * tw_term * wt_term
                     scores.append(score)
 
-                # 依照分數計算機率
-                scores = np.array(scores, dtype = float)
-                sum_scores = scores.sum()
-                if sum_scores < 1e-12:  # 若總和為 0，均勻分布
-                    probs = np.ones_like(scores) / len(scores)
-                else:
-                    probs = scores / sum_scores
-                s = probs.sum()
-                probs = probs / (s if s > 0 else 1.0)
-
                 # 決定下一個節點（r0 控制貪婪 or 隨機）
-                r = random.random()  
-                if r <= self.r0:
-                    nextNode = feasibleNodes[int(np.argmax(probs))]
-                else:
+                r = random.random()
+                scores = np.array(scores, dtype = float) 
+                if r <= self.r0:  # exploitation
+                    maxScore = np.max(scores)
+                    maxIndices = np.where(scores == maxScore)[0]   # 找出所有並列最大的位置
+                    nextNode = feasibleNodes[np.random.choice(maxIndices)]  # 從並列最大的客戶中隨機挑一個
+                else:  # exploration, 依照分數計算機率
+                    sum_scores = scores.sum()
+                    if sum_scores < EPS:  # 若總和為 0，均勻分布
+                        probs = np.ones_like(scores) / len(scores)
+                    else:
+                        probs = scores / sum_scores
                     nextNode = int(np.random.choice(feasibleNodes, p = probs))
 
-                # 計算時間
-                travelTime = self.timeMatrix[currNode][nextNode]
-                arrival = currentTime + travelTime
-                ready, due = self.timeWindow[nextNode]
-                service = self.serviceTime[nextNode]
 
                 # 更新當前參數
-                currentTime = max(arrival, ready) + service # 更新當前時間
+                arrival = currentTime + self.timeMatrix[currNode, nextNode]
+                ready, due = self.timeWindow[nextNode]
+                currentTime = max(arrival, ready) + self.serviceTime[nextNode] # 更新當前時間
                 bottleNeckLoad += self.deliveryDemand[nextNode]  # 更新裝卸載前的容量瓶頸
                 currentLoad += self.pickupDemand[nextNode]  # 更新當前載重
                 bottleNeckLoad = max(bottleNeckLoad, currentLoad)  # 更新裝卸載後的容量瓶頸
@@ -253,22 +250,19 @@ class ACO:
                 total_distance += self.distMatrix[route[i]][route[i + 1]] # 累加路徑距離
         NV = len(sol) # 車輛數量
         f = self.objSigma * self.gd * NV + (1.0 - self.objSigma) * self.gt * total_distance
-        """ 加上 self.gd (單位派車成本) and self.gt (單位旅行距離成本) """
         return f, NV, total_distance    # 目標函數 f(S), 車輛數, 總距離
 
 
     def updatePheromone(self, Sbest):  # return the updated pheromoneMatrix
-        EPS = 1e-9     # 極小常數，用於避免除以 0 或 NaN 錯誤
         self.pheromonematrix *= (1.0 - self.rho)  # 費洛蒙蒸發
 
+        _, _, length = self.calculateObj(Sbest)
+        delta_tau = self.Q / (length + EPS) # 計算該路徑增加的費洛蒙量
+        """ length 是邊 (i, j) 的長度 (論文 length of the path (i, j) 看起來是這個),
+            還是整條 route 的總長度 (目前的程式看起來是這個) ? 
+            但 gemeni & gpt 傾向論文寫錯了，應該看解的總長度 """
+
         for route in Sbest:
-            length = 0.0
-            for i in range(len(route) - 1):
-                length += self.distMatrix[route[i]][route[i + 1]]
-            delta_tau = self.Q / (length + EPS) # 計算該路徑增加的費洛蒙量
-            """ length 是邊 (i, j) 的長度 (論文 length of the path (i, j) 看起來是這個),
-                還是整條 route 的總長度 (目前的程式看起來是這個) ? 
-                但 gemeni & gpt 傾向論文寫錯了，應該看 route 總長度 """
             for i in range(len(route) - 1):
                 u, v = route[i], route[i + 1]
                 self.pheromonematrix[u][v] += delta_tau # 更新費洛蒙
@@ -285,25 +279,25 @@ class ACO:
             return False  # infeasible, since the veh exceeds capacity at the start
 
         time = self.timeWindow[0][0]  # start from the depot
-        for i in range(1, len(route)):  # exclude the starting depot, but include the ending depot
-            prev = route[i-1]
-            currNode= route[i]
+        for i in range(len(route) - 1):  # exclude the starting depot, but include the ending depot
+            prev = route[i]
+            curr = route[i+1]
 
             # travel from prev to curr
-            time += self.timeMatrix[prev, currNode]
+            time += self.timeMatrix[prev, curr]
 
             # check time window
-            ready, due = self.timeWindow[currNode]
+            ready, due = self.timeWindow[curr]
             if time < ready:
                 time = ready  # wait at this node until ready
             if time > due:
                 return False  # infeasible, since the veh arrives later than the due time
 
             # add service time
-            time += self.serviceTime[currNode]
+            time += self.serviceTime[curr]
 
             # update load (no pickup or delivery at the ending depot)
-            load += (self.pickupDemand[currNode] - self.deliveryDemand[currNode])
+            load += (self.pickupDemand[curr] - self.deliveryDemand[curr])
             if load > self.vehCapacity:
                 return False  # infeasible, since the veh exceeds capacity
 
@@ -335,8 +329,8 @@ class ACO:
 
         # remove the second to the L-th customer based on relatedness
         while len(R) <= self.L:
-            seed = random.choice(R)  # randomly select a seed customer from R
-            relevanceScores = [(c, calculateRelevance(seed, c)) for c in U]
+            r = random.choice(R)  # randomly select a seed customer from R
+            relevanceScores = [(c, calculateRelevance(r, c)) for c in U]
             relevanceScores.sort(key = lambda x: x[1], reverse = True)  # sort relevance from high to low
             
             idx = int((random.random() ** self.D) * len(U))  # idx is the index of customer to remove in relevanceScores
@@ -405,16 +399,21 @@ class ACO:
 
 
 if __name__ == "__main__":
-    # datasetFilePath = "Wang_Chen_data/cdp101.txt"  # please put the folder "Wang_Chen_data" in the same directory as ACO.py
-    datasetFilePath = "Wang_Chen_data/rdp101.txt"  # just for testing
     solver = ACO()
+    datasetFilePath = "Wang_Chen_data/rdp101.txt"
     solver.setProblemParameter(datasetFilePath) 
     solver.setAlgorithmParameter(m = 20, alpha = 2, beta = 1, gamma = 2, delta = 3, rho = 0.85, 
-        Q = 1000, r0 = 0.5, maxIter = 200, L = 0.1 * solver.customerCnt, D = 5)
+        Q = 1000, r0 = 0.5, maxIter = 200, L = 0.1 * solver.customerCnt, D = 3)
+    
+    import time
+    startTime = time.perf_counter()
     bestSol, bestObjInfo = solver.run()
+    endTime = time.perf_counter()
+
     print("bestSol:")
     for route in bestSol:
         print(route)
     print("bestObj:", bestObjInfo[0])
     print("number of vehicle", bestObjInfo[1])
     print("total dist", bestObjInfo[2])
+    print(f"execution time {endTime - startTime:.2f}")
